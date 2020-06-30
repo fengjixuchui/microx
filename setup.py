@@ -10,9 +10,9 @@ if sys.version_info < (3, 5):
 
 microx_core = setuptools.Extension(
     "microx_core",
-    include_dirs=[".", "third_party/include"],
+    include_dirs=["microx/include", "third_party/include"],
     sources=["microx/Executor.cpp", "microx/Python.cpp"],
-    extra_compile_args=["-std=gnu++11", "-g3", "-O0"],
+    extra_compile_args=["-DPYTHON_BINDINGS=1", "-std=gnu++11", "-g3", "-O0"],
     libraries=["xed"],
     library_dirs=["third_party/lib"],
     runtime_library_dirs=["third_party/lib"])
