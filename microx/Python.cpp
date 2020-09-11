@@ -29,11 +29,9 @@
 
 #include "microx/Executor.h"
 
-#if PY_MAJOR_VERSION == 3
-#define PYTHON3
-#elif PY_MAJOR_VERSION == 2
-#define PYTHON2
-#else
+#if PY_MAJOR_VERSION == 2
+#error "Python 2 builds are no longer supported"
+#elif PY_MAJOR_VERSION > 3
 #error "Building for an unsupported Python version"
 #endif
 
@@ -104,8 +102,59 @@ static int Executor_init(PyObject *self_, PyObject *args, PyObject *) {
   return 0;
 }
 
+// A reference to the MicroxError
+static PyObject *MicroxError{nullptr};
+
+// A reference to the InstructionDecodeError
+static PyObject *InstructionDecodeError{nullptr};
+
 // A reference to the InstructionFetchError
 static PyObject *InstructionFetchError{nullptr};
+
+// A reference to the AddressFaultError
+static PyObject *AddressFaultError{nullptr};
+
+// A reference to the UnsupportedError
+static PyObject *UnsupportedError{nullptr};
+
+// Initialize the exception references.
+static bool CreateExceptions(PyObject *microx) {
+  MicroxError = PyErr_NewException("microx_core.MicroxError", nullptr, nullptr);
+  if (nullptr == MicroxError) {
+    return false;
+  }
+  PyModule_AddObject(microx, "MicroxError", MicroxError);
+
+  InstructionDecodeError = PyErr_NewException(
+      "microx_core.InstructionDecodeError", MicroxError, nullptr);
+  if (nullptr == InstructionDecodeError) {
+    return false;
+  }
+  PyModule_AddObject(microx, "InstructionDecodeError", InstructionDecodeError);
+
+  InstructionFetchError = PyErr_NewException(
+      "microx_core.InstructionFetchError", MicroxError, nullptr);
+  if (nullptr == InstructionFetchError) {
+    return false;
+  }
+  PyModule_AddObject(microx, "InstructionFetchError", InstructionFetchError);
+
+  AddressFaultError =
+      PyErr_NewException("microx_core.AddressFaultError", MicroxError, nullptr);
+  if (nullptr == AddressFaultError) {
+    return false;
+  }
+  PyModule_AddObject(microx, "AddressFaultError", AddressFaultError);
+
+  UnsupportedError =
+      PyErr_NewException("microx_core.UnsupportedError", MicroxError, nullptr);
+  if (nullptr == UnsupportedError) {
+    return false;
+  }
+  PyModule_AddObject(microx, "UnsupportedError", UnsupportedError);
+
+  return true;
+}
 
 // Emulate an instruction.
 static PyObject *Executor_Execute(PyObject *self_, PyObject *args) {
@@ -131,15 +180,20 @@ static PyObject *Executor_Execute(PyObject *self_, PyObject *args) {
       return nullptr;
 
     case ExecutorStatus::kErrorDecode:
+      PyErr_SetString(InstructionDecodeError, "Unable to decode instruction.");
+      return nullptr;
+    case ExecutorStatus::kErrorUnsupportedFeatures:
     case ExecutorStatus::kErrorUnsupportedCFI:
     case ExecutorStatus::kErrorUnsupportedStack:
+      PyErr_SetString(UnsupportedError,
+                      "Instruction is not supported by microx.");
+      return nullptr;
     case ExecutorStatus::kErrorExecute:
-      PyErr_SetString(PyExc_RuntimeError,
-                      "Unable to micro-execute instruction.");
+      PyErr_SetString(MicroxError, "Unable to micro-execute instruction.");
       return nullptr;
 
     case ExecutorStatus::kErrorFault:
-      PyErr_SetString(PyExc_RuntimeError,
+      PyErr_SetString(AddressFaultError,
                       "Instruction faulted during micro-execution.");
       return nullptr;
 
@@ -171,8 +225,7 @@ static PyObject *Executor_Execute(PyObject *self_, PyObject *args) {
       return nullptr;
   }
 
-  Py_INCREF(Py_True);
-  return Py_True;
+  Py_RETURN_TRUE;
 }
 
 // Python representation for the type of an executor.
@@ -230,15 +283,8 @@ bool PythonExecutor::ReadValue(PyObject *res, size_t num_bits, Data &val,
       has_error = true;
     }
     return false;
-
-#if defined(PYTHON3)
   } else if (PyLong_CheckExact(res)) {
     WriteData(val, PyLong_AsLong(res));
-#elif defined(PYTHON2)
-  } else if (PyInt_CheckExact(res)) {
-    WriteData(val, PyInt_AsLong(res));
-#endif
-
   } else if (PyFloat_Check(res)) {
     if (32 == num_bits) {
       WriteData(val, static_cast<float>(PyFloat_AsDouble(res)));
@@ -322,14 +368,8 @@ bool PythonExecutor::WriteReg(const char *name, size_t size,
     return false;
   }
 
-  auto ret = PyObject_CallMethod(
-#if defined(PYTHON3)
-      self, "write_register", "(s,y#)", name, val.bytes, (size + 7) / 8);
-#elif defined(PYTHON2)
-      self, "write_register", "(s,s#)", name, val.bytes, (size + 7) / 8);
-#else
-#error "Unsupported Python"
-#endif
+  auto ret = PyObject_CallMethod(self, "write_register", "(s,y#)", name,
+                                 val.bytes, (size + 7) / 8);
   Py_XDECREF(ret);
   return nullptr != ret;
 }
@@ -360,14 +400,8 @@ bool PythonExecutor::WriteMem(uintptr_t addr, size_t size,
     return false;
   }
 
-  auto ret = PyObject_CallMethod(
-#if defined(PYTHON3)
-      self, "write_memory", "(K,y#)", addr, val.bytes, size / 8);
-#elif defined(PYTHON2)
-      self, "write_memory", "(K,s#)", addr, val.bytes, size / 8);
-#else
-#error "Unsupported Python"
-#endif
+  auto ret = PyObject_CallMethod(self, "write_memory", "(K,y#)", addr,
+                                 val.bytes, size / 8);
   Py_XDECREF(ret);
   return nullptr != ret;
 }
@@ -407,24 +441,17 @@ bool PythonExecutor::ReadFPU(FPU &val) const {
 }
 
 bool PythonExecutor::WriteFPU(const FPU &val) const {
-  auto ret = PyObject_CallMethod(
-#if defined(PYTHON3)
-      self, "write_fpu", "(z#)", val.bytes, sizeof(val));
-#elif defined(PYTHON2)
-      self, "write_fpu", "(s#)", val.bytes, sizeof(val));
-#else
-#error "Unsupported Python"
-#endif
+  auto ret =
+      PyObject_CallMethod(self, "write_fpu", "(z#)", val.bytes, sizeof(val));
   Py_XDECREF(ret);
   return nullptr != ret;
 }
 
-#ifdef PYTHON3
 struct module_state {
   PyObject *error;
 };
 
-static struct PyModuleDef gModuleDef = {
+static struct PyModuleDef gMicroxModuleDef = {
     PyModuleDef_HEAD_INIT,
     "microx_core",
     "x86 and x86-64 micro-execution support.",
@@ -434,37 +461,19 @@ static struct PyModuleDef gModuleDef = {
     nullptr,
     nullptr,
     nullptr};
-#endif
 
-#ifdef PYTHON3
-#define RETURN_ERROR return nullptr
-#define RETURN_OK(x) return x
-#elif defined(PYTHON2)
-#define RETURN_ERROR return
-#define RETURN_OK(x) return
-#else
-#error "Unsupported Python version"
-#endif
-
-#ifdef PYTHON3
 PyMODINIT_FUNC PyInit_microx_core(void) {
-#elif defined(PYTHON2)
-PyMODINIT_FUNC initmicrox_core(void) {
-#else
-#error "Unsupported Python version"
-#endif
   if (!Executor::Init()) {
-    RETURN_ERROR;
+    return nullptr;
   }
 
-#ifdef PYTHON3
-  auto m = PyModule_Create(&gModuleDef);
-#elif defined(PYTHON2)
-  auto m = Py_InitModule3("microx_core", gModuleMethods,
-                          "x86 and x86-64 micro-execution support.");
-#endif
-  if (!m) {
-    RETURN_ERROR;
+  auto microx = PyModule_Create(&gMicroxModuleDef);
+  if (!microx) {
+    return PyErr_NoMemory();
+  }
+
+  if (!CreateExceptions(microx)) {
+    return PyErr_NoMemory();
   }
 
   // Initialize the `Executor` type. Easier to manually initialize the various
@@ -482,22 +491,14 @@ PyMODINIT_FUNC initmicrox_core(void) {
   gExecutorType.tp_methods = gExecutorMethods;
   gExecutorType.tp_base = &PyBaseObject_Type;
   if (0 != PyType_Ready(&gExecutorType)) {
-    RETURN_ERROR;
+    return nullptr;
   }
 
   Py_INCREF(&gExecutorType);
-  PyModule_AddObject(m, "Executor",
+  PyModule_AddObject(microx, "Executor",
                      reinterpret_cast<PyObject *>(&gExecutorType));
 
-  InstructionFetchError =
-      PyErr_NewException("microx_core.InstructionFetchError", nullptr, nullptr);
-  if (nullptr == InstructionFetchError) {
-    RETURN_ERROR;
-  }
-  Py_INCREF(InstructionFetchError);
-  PyModule_AddObject(m, "InstructionFetchError", InstructionFetchError);
-
-  RETURN_OK(m);
+  return microx;
 }  // namespace
 
 }  // namespace

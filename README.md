@@ -1,5 +1,7 @@
 # microx - a micro execution framework
 
+![CI](https://github.com/lifting-bits/microx/workflows/CI/badge.svg)
+
 Microx is a single-instruction "micro execution" framework. Microx enables a program to safely execute an arbitrary x86 or x86-64 instruction. Microx does not take over or require a process context in order to execute an instruction. It is easily embedded within other programs, as exampled by the Python bindings.
 
 The microx approach to safe instruction execution of arbitrary instructions is to require the user of microx to manage machine state. Microx is packaged as a C++ `Executor` class that must be extended. The Python bindings also present a class, `microx.Executor`, that must be extended. A program extending this class must implement methods such as `read_register` and `read_memory`. When supplied with instruction bytes, microx will invoke the class methods in order to pull in the minimal requisite machine state to execute the instruction. After executing the instruction, microx will "report back" the state changes induced by the instruction's execution, again via methods like `write_register` and `write_memory`.
@@ -14,9 +16,34 @@ Microx uses a combination of JIT-based dynamic binary translation and instructio
 
 Microx depends on [Intel's XED](https://intelxed.github.io/) instruction encoder and decoder.
 
-## Building
+## Installing
 
-Microx can be built with CMake.
+Microx has Python bindings; you can install them via pip on macOS and Linux:
+
+```bash
+$ pip3 install microx
+```
+
+## Building (Python)
+
+If we don't supply a Python wheel for your platform, you can build microx yourself. You'll
+need at least Python 3.5.
+
+First, build XED:
+
+```bash
+$ ./scripts/bootstrap.sh
+```
+
+Then, use `setup.py build`:
+
+```bash
+$ setup.py build
+```
+
+## Building (C++)
+
+Microx's C++ library can be built with CMake.
 
 The CMake build uses `XED_DIR` to locate the XED library and headers.
 
@@ -33,15 +60,4 @@ Then, run a normal CMake build:
 mkdir build && cd build
 cmake ..
 cmake --build .
-```
-
-## Compilation on Windows (MinGW)
-
-To compile for Windows you can use MinGW, the following command should work (make sure to adjust for your Python version):
-
-```bash
-g++ -g -shared -DPYTHON_BINDINGS=1 \
-    Executor.cpp Python.cpp \
-    -Lc:\Python37-64\libs -lpython37 -std=c++14 -I.. -I..\third_party\include \
-    -Ic:\Python37-64\include -Wno-attributes -lxed -L..\third_party\lib -o microx_core.pyd
 ```
